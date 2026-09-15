@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+cache/
+website_hours.csv
+hours_comparison.csv
+hours_mismatches_only.csv
+simple_report.csv
