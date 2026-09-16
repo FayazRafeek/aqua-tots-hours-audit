@@ -119,6 +119,14 @@ that ignores the cache and refetches every page live (slower — a full
 refetch, not just the first run). On a hosted deployment, restarting the
 app also clears the cache, since it isn't committed to the repo.
 
+**Verbose logging**: every run prints each stage (fetching the sheet,
+scraping — one line per page with its fetch status, comparing — the
+verdict counts per column) to stdout with timestamps. Locally that's your
+terminal; on Streamlit Community Cloud, open the app, click the hamburger
+menu → **Manage app** to see the same log stream while the audit runs.
+Useful for telling whether a run is still working or stuck, and for
+spotting which specific page a slow or failed fetch came from.
+
 ## Command-line usage
 
 The CLI tools below (`audit.py`, `scrape_website_hours.py`,

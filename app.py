@@ -7,6 +7,9 @@ lets you download the result as CSV. No login, no database -- each run
 is stateless.
 """
 
+import logging
+import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +30,13 @@ from three_way_compare import (
 
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/17q2frziO5xfG55z7E8UsEDT56APvH93FSBPpV4b4Y20/edit?usp=sharing"
 SOURCE_OPTIONS = ["sheet", "gbp", "website"]  # "sheet" first: the recommended default
+
+# Streamlit Cloud's "Manage app" panel just tails this app's stdout/stderr --
+# there's no separate log viewer to configure. logging.basicConfig() is a
+# no-op after the first call, so this stays safe across Streamlit's repeated
+# reruns of the script instead of stacking up duplicate handlers.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
+logger = logging.getLogger("aqua_tots_audit")
 
 
 def _match_color(value):
@@ -125,19 +135,36 @@ with st.expander("Advanced settings"):
 run_clicked = st.button("Run audit", type="primary", disabled=gbp_file is None)
 
 if run_clicked:
+    run_started = time.monotonic()
     gbp_df = pd.read_csv(gbp_file, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+    logger.info(
+        "=== Run audit: %d GBP rows | source_of_truth=%s tolerance=%d blank_gbp_is_closed=%s "
+        "workers=%d force_refresh=%s ===",
+        len(gbp_df),
+        source_of_truth,
+        tolerance,
+        blank_gbp_is_closed,
+        workers,
+        force_refresh,
+    )
 
     with st.spinner("Fetching the master sheet..."):
+        logger.info("Fetching master sheet: %s", sheet_url)
+        sheet_started = time.monotonic()
         try:
             sheet_df = fetch_sheet_hours(sheet_url)
         except Exception as exc:
+            logger.error("Failed to fetch master sheet: %s", exc)
             st.error(f"Couldn't read the sheet: {exc}")
             st.stop()
+        logger.info("Master sheet fetched in %.1fs: %d rows", time.monotonic() - sheet_started, len(sheet_df))
 
     with st.spinner("Scraping location pages... this can take up to a minute"):
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         urls = sorted({normalize_url(u) for u in gbp_df["Website"] if normalize_url(u)})
+        logger.info("Scraping %d unique location pages with %d workers...", len(urls), workers)
+        scrape_started = time.monotonic()
         session = _make_session()
         cache_dir = Path("./cache")
         rows = []
@@ -146,12 +173,26 @@ if run_clicked:
             futures = {pool.submit(process_url, url, cache_dir, not force_refresh, session): url for url in urls}
             done = 0
             for future in as_completed(futures):
-                rows.append(future.result())
+                result = future.result()
+                rows.append(result)
                 done += 1
+                logger.info("[%d/%d] %s -> %s", done, len(urls), result["website_url"], result["fetch_status"])
                 progress.progress(done / len(urls))
         site_df = pd.DataFrame(rows, columns=WEBSITE_HOURS_COLUMNS)
 
+        flagged = site_df[site_df["fetch_status"] != "ok"]
+        logger.info(
+            "Scrape complete in %.1fs: %d pages, %d flagged for review",
+            time.monotonic() - scrape_started,
+            len(site_df),
+            len(flagged),
+        )
+        for _, flagged_row in flagged.iterrows():
+            logger.warning("Flagged: %s -> %s", flagged_row["website_url"], flagged_row["fetch_status"])
+
     with st.spinner("Comparing..."):
+        logger.info("Comparing %d locations...", len(gbp_df))
+        compare_started = time.monotonic()
         report = run_three_way(
             gbp_df,
             site_df,
@@ -159,6 +200,14 @@ if run_clicked:
             tolerance=tolerance,
             blank_gbp_is_closed=blank_gbp_is_closed,
             source_of_truth=source_of_truth,
+        )
+        for _, column_name in checker_columns(source_of_truth):
+            counts = report[column_name].value_counts().to_dict()
+            logger.info("%s: %s", column_name, counts)
+        logger.info(
+            "Comparison complete in %.1fs. Total run time: %.1fs",
+            time.monotonic() - compare_started,
+            time.monotonic() - run_started,
         )
 
     # Persist across reruns -- every widget interaction below (the filter
@@ -212,7 +261,7 @@ if "report" in st.session_state:
     table_key = f"results_table_{report_source_of_truth}_{'_'.join(filters.values())}"
     event = st.dataframe(
         styled,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",
