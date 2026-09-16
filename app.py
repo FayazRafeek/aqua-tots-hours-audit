@@ -15,17 +15,18 @@ import streamlit as st
 import hours_lib as hl
 from scrape_website_hours import WEBSITE_HOURS_COLUMNS, _make_session, normalize_url, process_url
 from sheet_source import fetch_sheet_hours
-from three_way_compare import HIDDEN_COLUMNS, run_three_way
+from three_way_compare import (
+    HIDDEN_COLUMNS,
+    HOURS_COLUMNS,
+    IDENTITY_COLUMNS,
+    SOURCE_LABELS,
+    checker_columns,
+    dialog_source_order,
+    run_three_way,
+)
 
 DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/17q2frziO5xfG55z7E8UsEDT56APvH93FSBPpV4b4Y20/edit?usp=sharing"
-
-MATCH_COLUMNS = ["GBP Matches Master Sheet", "Website Matches Master Sheet"]
-HOURS_COLUMNS = ["GBP Hours", "Website Hours", "Sheet Hours"]
-# Kept in the underlying data (and the CSV export) but not shown in the
-# on-screen table -- Website moves into the hours dialog instead, and the
-# rest just clutter the table without adding much once "Name" already
-# identifies the location.
-IDENTITY_COLUMNS_HIDDEN_FROM_TABLE = ["Store code", "Locality", "State", "Website"]
+SOURCE_OPTIONS = ["sheet", "gbp", "website"]  # "sheet" first: the recommended default
 
 
 def _match_color(value):
@@ -53,27 +54,29 @@ def _cell_style(status):
 
 
 @st.dialog("Hours comparison")
-def show_hours_dialog(row, tolerance):
+def show_hours_dialog(row, tolerance, source_of_truth):
     st.subheader(row["Name"])
 
-    gbp_by_day, site_by_day, sheet_by_day = row["_gbp_by_day"], row["_site_by_day"], row["_sheet_by_day"]
+    by_day = {"gbp": row["_gbp_by_day"], "website": row["_site_by_day"], "sheet": row["_sheet_by_day"]}
+    order = dialog_source_order(source_of_truth)  # source of truth first, then the other two
+    truth_key = order[0]
+    truth_by_day = by_day[truth_key]
 
-    header_cells = "".join(f"<th style='padding:6px 12px; text-align:left;'>{h}</th>" for h in ["Day", "Master Sheet", "Website", "GBP"])
+    header_cells = "".join(
+        f"<th style='padding:6px 12px; text-align:left;'>{h}</th>" for h in ["Day"] + [SOURCE_LABELS[k] for k in order]
+    )
     body_rows = []
     for day in hl.REPORT_DAY_ORDER:
-        g, s, sh = gbp_by_day.get(day), site_by_day.get(day), sheet_by_day.get(day)
-        # Master Sheet is the source of truth: both other columns are judged
-        # against it directly, not against each other.
-        site_style = _cell_style(_pair_status(sh, s, tolerance))
-        gbp_style = _cell_style(_pair_status(sh, g, tolerance))
-        body_rows.append(
-            "<tr>"
-            f"<td style='padding:6px 12px; font-weight:600;'>{day}</td>"
-            f"<td style='padding:6px 12px;'>{hl.fmt(sh) or '—'}</td>"
-            f"<td style='padding:6px 12px; {site_style}'>{hl.fmt(s) or '—'}</td>"
-            f"<td style='padding:6px 12px; {gbp_style}'>{hl.fmt(g) or '—'}</td>"
-            "</tr>"
-        )
+        truth_val = truth_by_day.get(day)
+        cells = [
+            f"<td style='padding:6px 12px; font-weight:600;'>{day}</td>",
+            f"<td style='padding:6px 12px;'>{hl.fmt(truth_val) or '—'}</td>",
+        ]
+        for key in order[1:]:
+            val = by_day[key].get(day)
+            style = _cell_style(_pair_status(truth_val, val, tolerance))
+            cells.append(f"<td style='padding:6px 12px; {style}'>{hl.fmt(val) or '—'}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
     st.markdown(
         f"<table style='width:100%; border-collapse:collapse;'>"
@@ -81,7 +84,10 @@ def show_hours_dialog(row, tolerance):
         f"{''.join(body_rows)}</table>",
         unsafe_allow_html=True,
     )
-    st.caption("Master Sheet is treated as the source of truth. Website and GBP are each colored by comparing against it directly. Gray means one side has no data for that day.")
+    st.caption(
+        f"{SOURCE_LABELS[truth_key]} is treated as the source of truth. The other columns are each "
+        "colored by comparing against it directly. Gray means one side has no data for that day."
+    )
 
     website = row.get("Website", "")
     if website:
@@ -89,12 +95,21 @@ def show_hours_dialog(row, tolerance):
     else:
         st.caption("No website on file for this location.")
 
+
 st.set_page_config(page_title="Aqua-Tots Hours Audit", layout="wide")
 st.title("Aqua-Tots Hours Audit")
 st.caption("Checks GBP hours against the website and the team's hours sheet.")
 
 sheet_url = st.text_input("Master Sheet URL", value=DEFAULT_SHEET_URL)
 gbp_file = st.file_uploader("GBP export CSV", type="csv")
+source_of_truth = st.selectbox(
+    "Source of truth",
+    SOURCE_OPTIONS,
+    format_func=lambda k: SOURCE_LABELS[k],
+    help="The other two sources are each checked directly against whichever one you pick here -- "
+    "not against each other. The Master Sheet is the recommended default since it's the one "
+    "the team maintains by hand; the website turned out not to be reliable enough to trust on its own.",
+)
 
 with st.expander("Advanced settings"):
     tolerance = st.number_input("Tolerance (minutes per boundary)", min_value=0, max_value=60, value=0, step=5)
@@ -137,55 +152,64 @@ if run_clicked:
         site_df = pd.DataFrame(rows, columns=WEBSITE_HOURS_COLUMNS)
 
     with st.spinner("Comparing..."):
-        report = run_three_way(gbp_df, site_df, sheet_df, tolerance=tolerance, blank_gbp_is_closed=blank_gbp_is_closed)
+        report = run_three_way(
+            gbp_df,
+            site_df,
+            sheet_df,
+            tolerance=tolerance,
+            blank_gbp_is_closed=blank_gbp_is_closed,
+            source_of_truth=source_of_truth,
+        )
 
     # Persist across reruns -- every widget interaction below (the filter
     # selectboxes, the download button) triggers a fresh rerun of this whole
     # script, and `run_clicked` is only True on the exact rerun where the
     # button itself was clicked. Without session_state, changing a filter
     # would make this `if run_clicked:` block skip entirely and the results
-    # would vanish.
+    # would vanish. This also freezes the source-of-truth choice the report
+    # was actually computed with, so changing the selectbox afterward (without
+    # re-running) can't desync it from the columns already on screen.
     st.session_state.report = report
     st.session_state.report_tolerance = tolerance
+    st.session_state.report_source_of_truth = source_of_truth
 
 if "report" in st.session_state:
     report = st.session_state.report
     report_tolerance = st.session_state.report_tolerance
+    report_source_of_truth = st.session_state.report_source_of_truth
+    checks = checker_columns(report_source_of_truth)  # [(other_key, column_name), ...]
+    match_columns = [name for _, name in checks]
 
-    gbp_vs_sheet_counts = report["GBP Matches Master Sheet"].value_counts()
-    site_vs_sheet_counts = report["Website Matches Master Sheet"].value_counts()
+    counts_by_column = {}
+    for _, column_name in checks:
+        counts = report[column_name].value_counts()
+        counts_by_column[column_name] = counts
+        st.subheader(column_name)
+        cols = st.columns(len(counts))
+        for col, (label, count) in zip(cols, counts.items()):
+            col.metric(label, count)
 
-    st.subheader("GBP vs Master Sheet")
-    cols = st.columns(len(gbp_vs_sheet_counts))
-    for col, (label, count) in zip(cols, gbp_vs_sheet_counts.items()):
-        col.metric(label, count)
-
-    st.subheader("Website vs Master Sheet")
-    cols = st.columns(len(site_vs_sheet_counts))
-    for col, (label, count) in zip(cols, site_vs_sheet_counts.items()):
-        col.metric(label, count)
-
-    filter_col1, filter_col2 = st.columns(2)
-    gbp_vs_sheet_filter = filter_col1.selectbox("Filter: GBP Matches Master Sheet", ["All"] + list(gbp_vs_sheet_counts.index))
-    site_vs_sheet_filter = filter_col2.selectbox(
-        "Filter: Website Matches Master Sheet", ["All"] + list(site_vs_sheet_counts.index)
-    )
+    filter_cols = st.columns(len(checks))
+    filters = {}
+    for filter_col, (_, column_name) in zip(filter_cols, checks):
+        filters[column_name] = filter_col.selectbox(
+            f"Filter: {column_name}", ["All"] + list(counts_by_column[column_name].index)
+        )
 
     shown = report
-    if gbp_vs_sheet_filter != "All":
-        shown = shown[shown["GBP Matches Master Sheet"] == gbp_vs_sheet_filter]
-    if site_vs_sheet_filter != "All":
-        shown = shown[shown["Website Matches Master Sheet"] == site_vs_sheet_filter]
+    for column_name, value in filters.items():
+        if value != "All":
+            shown = shown[shown[column_name] == value]
 
     st.caption("Hours aren't shown in the table -- three columns of comma-separated times were hard to scan. Click a row to view its hours.")
-    table_view = shown.drop(columns=HOURS_COLUMNS + HIDDEN_COLUMNS + IDENTITY_COLUMNS_HIDDEN_FROM_TABLE)
-    styled = table_view.style.map(_match_color, subset=MATCH_COLUMNS)
+    table_view = shown.drop(columns=HOURS_COLUMNS + HIDDEN_COLUMNS + IDENTITY_COLUMNS)
+    styled = table_view.style.map(_match_color, subset=match_columns)
 
-    # Keying on the filter selections forces Streamlit to treat this as a
-    # fresh widget whenever the filters change, so a selection made in one
-    # filtered view can't carry over and silently point at the wrong row in
-    # another.
-    table_key = f"results_table_{gbp_vs_sheet_filter}_{site_vs_sheet_filter}"
+    # Keying on the filter selections (and the source of truth, since that
+    # changes which columns even exist) forces Streamlit to treat this as a
+    # fresh widget whenever any of them change, so a selection made in one
+    # view can't carry over and silently point at the wrong row in another.
+    table_key = f"results_table_{report_source_of_truth}_{'_'.join(filters.values())}"
     event = st.dataframe(
         styled,
         use_container_width=True,
@@ -204,7 +228,7 @@ if "report" in st.session_state:
         # underlying selection state never actually changed.
         if st.session_state.get("last_opened_row") != (table_key, idx):
             st.session_state.last_opened_row = (table_key, idx)
-            show_hours_dialog(shown.iloc[idx], report_tolerance)
+            show_hours_dialog(shown.iloc[idx], report_tolerance, report_source_of_truth)
     else:
         st.session_state.last_opened_row = None
 

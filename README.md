@@ -26,36 +26,52 @@ streamlit run app.py
 ```
 
 Opens a page at `http://localhost:8501`: paste/confirm the Master Sheet URL
-(pre-filled with the team's sheet), upload the GBP export CSV, click "Run
-audit". You get a table back — just **Name, Website Matches Master Sheet,
-GBP Matches Master Sheet** — color-coded green (`Yes`) / red (`No`) / amber
-(`N/A (not enough data)`), plus a CSV download button. Store code, Locality,
-State, and Website aren't shown in the table (the name already identifies
-the location, and Website lives in the hours dialog instead — see below),
-but all four are still included in the CSV download for reference.
+(pre-filled with the team's sheet), upload the GBP export CSV, pick a
+**Source of truth**, click "Run audit". You get a table back — just **Name**
+plus the two match columns for whichever source you picked — color-coded
+green (`Yes`) / red (`No`) / amber (`N/A (not enough data)`), plus a CSV
+download button. Store code, Locality, State, and Website aren't shown in
+the table (the name already identifies the location, and Website lives in
+the hours dialog instead — see below), but all four are still included in
+the CSV download for reference.
+
+**Source of truth is a dropdown, not fixed**: pick GBP, Website, or Master
+Sheet, and the app checks the *other two* directly against whichever one you
+picked — same star-shaped comparison either way, just pointed at a
+different center. Column names and the hours dialog both follow: pick
+"GBP" and you get `Website Matches GBP` / `Master Sheet Matches GBP`, with
+the dialog showing GBP plain and the other two colored against it. Master
+Sheet is the recommended default since it's the one the team maintains by
+hand — the website turned out not to be reliable enough to trust on its
+own — but nothing stops you from checking, say, whether the website and
+sheet agree with what's on GBP instead.
+
+**Changing the dropdown alone doesn't change what's on screen** — it only
+takes effect on the next "Run audit" click. The already-computed report
+keeps showing the source of truth it was actually run with, so you can't
+end up with a screen where the columns and the underlying numbers disagree
+about which source is "truth."
 
 **Hours live in a dialog, not the table**: three columns of comma-separated
 per-day times were hard to scan side by side, so the table only shows the
-match verdicts. Click anywhere on a row to open a popup with a proper Day /
-Master Sheet / Website / GBP grid for that location, the location's website
-link at the bottom. The Master Sheet is treated as the source of truth: it's
-shown plain, and the Website and GBP columns are each colored by comparing
-directly against it (gray means the Master Sheet had no data for that day,
-so there's nothing to check against). Click the row again (or another row)
-to close it or switch locations.
+match verdicts. Click anywhere on a row to open a popup with a proper Day
+grid for that location (source of truth first, then the other two), plus
+the location's website link at the bottom. The chosen source of truth is
+shown plain, and the other two columns are each colored by comparing
+directly against it (gray means the source of truth had no data for that
+day, so there's nothing to check against). Click the row again (or another
+row) to close it or switch locations.
 
-**How the two match columns work:** both are checked directly against the
-Master Sheet, not against each other — `GBP Matches Master Sheet` compares
-GBP against the sheet, and `Website Matches Master Sheet` compares the
-website against the sheet, exactly like the hours dialog. Reporting them
-separately (rather than one combined verdict) shows which side is actually
-the odd one out. The trade-off of trusting the sheet: if the sheet itself is
-wrong, GBP and the website can both come back flagged even though they
-agree with each other — that's expected, not a bug, since everything is
-judged against the sheet on purpose. A day only counts if both sides being
-compared have data for it; a location with too little overlapping data
-across the board comes back `N/A (not enough data)` rather than a false
-`Yes`.
+**How the two match columns work:** both are checked directly against
+whichever source you picked as truth, not against each other — reporting
+them separately (rather than one combined verdict) shows which side is
+actually the odd one out. The trade-off of trusting one source: if that
+source itself is wrong, the other two can both come back flagged even
+though they agree with each other — that's expected, not a bug, since
+everything is judged against the chosen source on purpose. A day only
+counts if both sides being compared have data for it; a location with too
+little overlapping data across the board comes back `N/A (not enough
+data)` rather than a false `Yes`.
 
 **The sheet join is name-based and exact-ish**: a location's GBP `Business
 name` is matched to the sheet's `Location Name` after lowercasing and

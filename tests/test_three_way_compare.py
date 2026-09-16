@@ -1,7 +1,7 @@
 import pandas as pd
 
 import hours_lib as hl
-from three_way_compare import run_three_way
+from three_way_compare import checker_columns, report_columns, run_three_way
 
 
 def _gbp_row(store_code, name, website, **day_hours):
@@ -112,3 +112,67 @@ def test_tolerance_forgives_small_differences_independently_per_column():
     lenient = run_three_way(gbp_df, site_df, sheet_df, tolerance=15)
     assert lenient.iloc[0]["GBP Matches Master Sheet"] == "Yes"
     assert lenient.iloc[0]["Website Matches Master Sheet"] == "Yes"
+
+
+# ---------------------------------------------------------------------------
+# Configurable source of truth -- any of GBP, the website, or the sheet can
+# be picked as the thing the other two are checked against.
+# ---------------------------------------------------------------------------
+
+def test_checker_columns_names_per_source_of_truth():
+    assert checker_columns("sheet") == [
+        ("website", "Website Matches Master Sheet"),
+        ("gbp", "GBP Matches Master Sheet"),
+    ]
+    assert checker_columns("gbp") == [
+        ("website", "Website Matches GBP"),
+        ("sheet", "Master Sheet Matches GBP"),
+    ]
+    assert checker_columns("website") == [
+        ("gbp", "GBP Matches Website"),
+        ("sheet", "Master Sheet Matches Website"),
+    ]
+
+
+def test_checker_columns_rejects_unknown_source():
+    try:
+        checker_columns("bogus")
+        assert False, "expected a ValueError"
+    except ValueError:
+        pass
+
+
+def test_report_columns_matches_run_three_way_output_columns():
+    gbp_df = pd.DataFrame([_gbp_row("S1", "Loc", "https://example.com/loc/", Monday="09:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/loc/", Monday="09:00-17:00")])
+    sheet_df = pd.DataFrame([_sheet_row("Loc", Monday="09:00-17:00")])
+
+    for source in ["sheet", "gbp", "website"]:
+        report = run_three_way(gbp_df, site_df, sheet_df, source_of_truth=source)
+        assert list(report.columns[: len(report_columns(source))]) == report_columns(source)
+
+
+def test_gbp_as_source_of_truth():
+    # GBP is truth. The website disagrees with GBP; the sheet matches GBP.
+    gbp_df = pd.DataFrame([_gbp_row("S1", "GBP Is Truth", "https://example.com/gbp-truth/", Monday="09:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/gbp-truth/", Monday="10:00-17:00")])
+    sheet_df = pd.DataFrame([_sheet_row("GBP Is Truth", Monday="09:00-17:00")])
+
+    report = run_three_way(gbp_df, site_df, sheet_df, source_of_truth="gbp")
+    row = report.iloc[0]
+    assert row["Website Matches GBP"] == "No"
+    assert row["Master Sheet Matches GBP"] == "Yes"
+    # The old sheet-as-truth columns shouldn't exist under this mode.
+    assert "GBP Matches Master Sheet" not in report.columns
+
+
+def test_website_as_source_of_truth():
+    # Website is truth. GBP disagrees with the website; the sheet matches it.
+    gbp_df = pd.DataFrame([_gbp_row("S1", "Website Is Truth", "https://example.com/site-truth/", Monday="10:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/site-truth/", Monday="09:00-17:00")])
+    sheet_df = pd.DataFrame([_sheet_row("Website Is Truth", Monday="09:00-17:00")])
+
+    report = run_three_way(gbp_df, site_df, sheet_df, source_of_truth="website")
+    row = report.iloc[0]
+    assert row["GBP Matches Website"] == "No"
+    assert row["Master Sheet Matches Website"] == "Yes"
