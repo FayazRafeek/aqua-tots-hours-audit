@@ -6,9 +6,10 @@ turned out not to be reliable enough to treat as ground truth on its own, so
 the sheet was added as a third, independently-checked source rather than a
 replacement.
 
-Built for Aqua-Tots first; Papa's Pizza To Go, Sarpino's Pizzeria, and Papa
-Romano's were added after. Everything except the website's HTML parsing is
-shared across brands unchanged -- see "Adding a new brand" near the bottom.
+Built for Aqua-Tots first; Papa's Pizza To Go, Sarpino's Pizzeria, Papa
+Romano's, and Breadeaux Pizza were added after. Everything except the
+website's HTML parsing is shared across brands unchanged -- see "Adding a
+new brand" near the bottom.
 
 ## Install
 
@@ -180,8 +181,9 @@ python scrape_website_hours.py --gbp gbp_export.csv
 ```
 
 Useful flags:
-- `--brand aqua_tots|papas_pizza|sarpinos|papa_romanos` — which site's markup
-  to parse (default `aqua_tots`). See "Adding a new brand" below.
+- `--brand aqua_tots|papas_pizza|sarpinos|papa_romanos|breadeaux` — which
+  site's markup to parse (default `aqua_tots`). See "Adding a new brand"
+  below.
 - `--limit 5` — smoke test against the first 5 pages only.
 - `--workers 8` — parallel fetch workers (default 8).
 - `--cache ./cache` — disk cache directory for raw HTML, keyed by URL hash. A

@@ -7,7 +7,7 @@ change, since scraper_core.py, hours_lib.py, sheet_source.py,
 three_way_compare.py, and app.py are all brand-agnostic.
 """
 
-from . import aqua_tots, papa_romanos, papas_pizza, sarpinos
+from . import aqua_tots, breadeaux, papa_romanos, papas_pizza, sarpinos
 
 BRANDS = {
     "aqua_tots": {
@@ -28,6 +28,11 @@ BRANDS = {
     "papa_romanos": {
         "label": "Papa Romano's",
         "parse_page": papa_romanos.parse_page,
+        "default_sheet_url": "",
+    },
+    "breadeaux": {
+        "label": "Breadeaux Pizza",
+        "parse_page": breadeaux.parse_page,
         "default_sheet_url": "",
     },
 }
