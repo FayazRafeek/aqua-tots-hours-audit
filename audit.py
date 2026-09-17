@@ -18,7 +18,8 @@ import pandas as pd
 
 import hours_lib as hl
 from compare_hours import run_comparison
-from scrape_website_hours import WEBSITE_HOURS_COLUMNS, _make_session, process_url, unique_urls_from_gbp
+from scraper_core import WEBSITE_HOURS_COLUMNS, _make_session, process_url, unique_urls_from_gbp
+from scrapers import BRANDS
 
 SIMPLE_COLUMNS = ["Store code", "Business name", "Locality", "State", "Website", "GBP Hours", "Website Hours", "Do they Match"]
 
@@ -47,7 +48,7 @@ def to_simple_report(report):
     return simple[SIMPLE_COLUMNS]
 
 
-def scrape(gbp_path, cache_dir, workers, use_cache_read):
+def scrape(gbp_path, cache_dir, workers, use_cache_read, parse_page_fn):
     urls = unique_urls_from_gbp(gbp_path)
     print(f"Fetching {len(urls)} unique location pages ({workers} workers)...")
 
@@ -55,7 +56,9 @@ def scrape(gbp_path, cache_dir, workers, use_cache_read):
     rows = []
     start = time.time()
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(process_url, url, cache_dir, use_cache_read, session): url for url in urls}
+        futures = {
+            pool.submit(process_url, url, cache_dir, use_cache_read, session, parse_page_fn): url for url in urls
+        }
         for future in as_completed(futures):
             rows.append(future.result())
     print(f"Done in {time.time() - start:.1f}s")
@@ -66,6 +69,7 @@ def scrape(gbp_path, cache_dir, workers, use_cache_read):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gbp", required=True, help="Path to the GBP export CSV")
+    parser.add_argument("--brand", choices=list(BRANDS), default="aqua_tots", help="Which site's markup to parse")
     parser.add_argument("--out", default="simple_report.csv", help="Output CSV path")
     parser.add_argument("--cache", default="./cache", help="Disk cache directory for raw HTML")
     parser.add_argument("--no-cache-read", action="store_true", help="Force refetch, ignore cache")
@@ -80,7 +84,8 @@ def main():
     args = parser.parse_args()
 
     gbp_df = pd.read_csv(args.gbp, encoding="utf-8-sig", dtype=str, keep_default_na=False)
-    site_df = scrape(args.gbp, Path(args.cache), args.workers, not args.no_cache_read)
+    parse_page_fn = BRANDS[args.brand]["parse_page"]
+    site_df = scrape(args.gbp, Path(args.cache), args.workers, not args.no_cache_read, parse_page_fn)
 
     full_report = run_comparison(gbp_df, site_df, args.tolerance, args.blank_gbp_is_closed == "yes")
     simple = to_simple_report(full_report)

@@ -176,3 +176,49 @@ def test_website_as_source_of_truth():
     row = report.iloc[0]
     assert row["GBP Matches Website"] == "No"
     assert row["Master Sheet Matches Website"] == "Yes"
+
+
+# ---------------------------------------------------------------------------
+# Optional sheet: sheet_df=None means GBP vs website only.
+# ---------------------------------------------------------------------------
+
+def test_no_sheet_produces_single_checker_column():
+    gbp_df = pd.DataFrame([_gbp_row("S1", "No Sheet Here", "https://example.com/no-sheet/", Monday="09:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/no-sheet/", Monday="09:00-17:00")])
+
+    report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="website")
+    assert "GBP Matches Website" in report.columns
+    assert "Master Sheet Matches Website" not in report.columns
+    assert "Sheet Hours" not in report.columns
+    assert report.iloc[0]["GBP Matches Website"] == "Yes"
+
+
+def test_no_sheet_gbp_as_truth():
+    gbp_df = pd.DataFrame([_gbp_row("S1", "GBP Truth No Sheet", "https://example.com/gbp-no-sheet/", Monday="09:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/gbp-no-sheet/", Monday="10:00-17:00")])
+
+    report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="gbp")
+    assert "Website Matches GBP" in report.columns
+    assert "Master Sheet Matches GBP" not in report.columns
+    assert report.iloc[0]["Website Matches GBP"] == "No"
+
+
+def test_no_sheet_rejects_sheet_as_source_of_truth():
+    gbp_df = pd.DataFrame([_gbp_row("S1", "Bad Truth", "https://example.com/bad-truth/", Monday="09:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/bad-truth/", Monday="09:00-17:00")])
+
+    try:
+        run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="sheet")
+        assert False, "expected a ValueError"
+    except ValueError:
+        pass
+
+
+def test_no_sheet_hidden_columns_omit_sheet_by_day():
+    gbp_df = pd.DataFrame([_gbp_row("S1", "No Sheet Hidden", "https://example.com/no-sheet-hidden/", Monday="09:00-17:00")])
+    site_df = pd.DataFrame([_site_row("https://example.com/no-sheet-hidden/", Monday="09:00-17:00")])
+
+    report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="website")
+    assert "_sheet_by_day" not in report.columns
+    assert "_gbp_by_day" in report.columns
+    assert "_site_by_day" in report.columns

@@ -12,7 +12,7 @@ import sys
 import pandas as pd
 
 import hours_lib as hl
-from scrape_website_hours import normalize_url
+from scraper_core import normalize_url
 
 REPORT_COLUMNS = (
     ["Store code", "Business name", "Locality", "State", "Status", "Verdict", "Days differing", "What to fix"]

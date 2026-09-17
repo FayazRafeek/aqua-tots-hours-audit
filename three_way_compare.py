@@ -1,27 +1,33 @@
-"""Compare GBP, website, and the team's hours sheet, three ways at once.
+"""Compare GBP, website, and (optionally) the team's hours sheet.
 
 The website turned out not to be reliable, so rather than always trusting
 one particular source, whichever one is picked as the "source of truth"
 (GBP, the website, or the sheet -- see SOURCE_LABELS) gets checked against
-by the other two directly, not against each other. That way, if the trusted
+by the other(s) directly, not against each other. That way, if the trusted
 source is right and one of the others is wrong, only that one gets flagged
--- the third source isn't blamed just because it happens to agree with the
+-- a third source isn't blamed just because it happens to agree with the
 wrong side.
+
+The sheet is optional: pass sheet_df=None to compare GBP against the website
+only (source_of_truth must then be "gbp" or "website"). Every function here
+takes the same `sources` list -- which sources actually exist this run --
+so the columns, the dialog, and the CSV all agree on what's available.
 """
 
 import pandas as pd
 
 import hours_lib as hl
-from scrape_website_hours import normalize_url
+from scraper_core import normalize_url
 from sheet_source import normalize_name
 
 SOURCE_LABELS = {"gbp": "GBP", "website": "Website", "sheet": "Master Sheet"}
 
-# Fixed relative order the two non-truth sources are shown in, regardless of
-# which one is picked as truth (this is what made "Website Matches Master
-# Sheet" come before "GBP Matches Master Sheet" originally, back when the
-# sheet was the only option -- kept for a stable, predictable column order).
-_SOURCE_DISPLAY_ORDER = ["website", "gbp", "sheet"]
+# Fixed relative order sources are shown in, regardless of which one is
+# picked as truth or which are actually available (this is what made
+# "Website Matches Master Sheet" come before "GBP Matches Master Sheet"
+# originally, back when the sheet was the only option -- kept for a stable,
+# predictable column order).
+ALL_SOURCES = ["website", "gbp", "sheet"]
 
 BY_DAY_KEYS = {"gbp": "_gbp_by_day", "website": "_site_by_day", "sheet": "_sheet_by_day"}
 
@@ -34,27 +40,30 @@ HOURS_COLUMNS = ["GBP Hours", "Website Hours", "Sheet Hours"]
 HIDDEN_COLUMNS = ["_gbp_by_day", "_site_by_day", "_sheet_by_day"]
 
 
-def checker_columns(source_of_truth):
-    """The two "<other> Matches <truth>" column names for this source of
-    truth, in a stable order. Returns [(other_key, column_name), ...]."""
-    if source_of_truth not in SOURCE_LABELS:
-        raise ValueError(f"source_of_truth must be one of {list(SOURCE_LABELS)}, got {source_of_truth!r}")
+def checker_columns(source_of_truth, sources=ALL_SOURCES):
+    """The "<other> Matches <truth>" column names for this source of truth,
+    in a stable order. Returns [(other_key, column_name), ...] -- one entry
+    per source in `sources` other than the truth itself."""
+    if source_of_truth not in sources:
+        raise ValueError(f"source_of_truth must be one of {sources}, got {source_of_truth!r}")
     truth_label = SOURCE_LABELS[source_of_truth]
-    others = [k for k in _SOURCE_DISPLAY_ORDER if k != source_of_truth]
+    others = [k for k in ALL_SOURCES if k in sources and k != source_of_truth]
     return [(k, f"{SOURCE_LABELS[k]} Matches {truth_label}") for k in others]
 
 
-def dialog_source_order(source_of_truth):
+def dialog_source_order(source_of_truth, sources=ALL_SOURCES):
     """Source keys in the order the hours dialog should display them: the
-    source of truth first, then the other two in checker_columns' order."""
-    return [source_of_truth] + [k for k, _ in checker_columns(source_of_truth)]
+    source of truth first, then the other(s) in checker_columns' order."""
+    return [source_of_truth] + [k for k, _ in checker_columns(source_of_truth, sources)]
 
 
-def report_columns(source_of_truth):
+def report_columns(source_of_truth, sources=ALL_SOURCES):
     """Full display+CSV column order for a given source of truth (excludes
-    the hidden per-day dict columns)."""
-    checker_names = [name for _, name in checker_columns(source_of_truth)]
-    return ["Name"] + checker_names + IDENTITY_COLUMNS + HOURS_COLUMNS
+    the hidden per-day dict columns). Sheet Hours is only included when the
+    sheet is actually one of `sources`."""
+    checker_names = [name for _, name in checker_columns(source_of_truth, sources)]
+    hours_columns = ["GBP Hours", "Website Hours"] + (["Sheet Hours"] if "sheet" in sources else [])
+    return ["Name"] + checker_names + IDENTITY_COLUMNS + hours_columns
 
 
 def sheet_row_hours(sheet_row):
@@ -89,10 +98,14 @@ def pairwise_match_label(hours_a_by_day, hours_b_by_day, tolerance):
 
 
 def run_three_way(gbp_df, site_df, sheet_df, tolerance=0, blank_gbp_is_closed=True, source_of_truth="sheet"):
-    checks = checker_columns(source_of_truth)
+    """sheet_df=None means no sheet was provided -- GBP is compared against
+    the website only, and source_of_truth must be "gbp" or "website"."""
+    has_sheet = sheet_df is not None
+    sources = ALL_SOURCES if has_sheet else [s for s in ALL_SOURCES if s != "sheet"]
+    checks = checker_columns(source_of_truth, sources)
 
     site_by_url = {row["website_url"]: row for _, row in site_df.iterrows()}
-    sheet_by_name = {normalize_name(row["Location Name"]): row for _, row in sheet_df.iterrows()}
+    sheet_by_name = {normalize_name(row["Location Name"]): row for _, row in sheet_df.iterrows()} if has_sheet else {}
 
     rows = []
     for _, gbp_row in gbp_df.iterrows():
@@ -108,10 +121,12 @@ def run_three_way(gbp_df, site_df, sheet_df, tolerance=0, blank_gbp_is_closed=Tr
         else:
             site_hours = {day: None for day in hl.GBP_DAY_ORDER}
 
-        sheet_row = sheet_by_name.get(normalize_name(gbp_row.get("Business name", "")))
-        sheet_hours = sheet_row_hours(sheet_row) if sheet_row is not None else {day: None for day in hl.GBP_DAY_ORDER}
+        by_source = {"gbp": gbp_hours, "website": site_hours}
+        if has_sheet:
+            sheet_row = sheet_by_name.get(normalize_name(gbp_row.get("Business name", "")))
+            sheet_hours = sheet_row_hours(sheet_row) if sheet_row is not None else {day: None for day in hl.GBP_DAY_ORDER}
+            by_source["sheet"] = sheet_hours
 
-        by_source = {"gbp": gbp_hours, "website": site_hours, "sheet": sheet_hours}
         truth_hours = by_source[source_of_truth]
 
         row = {"Name": gbp_row.get("Business name", "")}
@@ -125,12 +140,14 @@ def run_three_way(gbp_df, site_df, sheet_df, tolerance=0, blank_gbp_is_closed=Tr
                 "Website": website,
                 "GBP Hours": _combine_days(gbp_hours),
                 "Website Hours": _combine_days(site_hours) if site_row is not None else "(not scraped)",
-                "Sheet Hours": _combine_days(sheet_hours) if sheet_row is not None else "(no match in sheet)",
                 "_gbp_by_day": gbp_hours,
                 "_site_by_day": site_hours,
-                "_sheet_by_day": sheet_hours,
             }
         )
+        if has_sheet:
+            row["Sheet Hours"] = _combine_days(sheet_hours) if sheet_row is not None else "(no match in sheet)"
+            row["_sheet_by_day"] = sheet_hours
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=report_columns(source_of_truth) + HIDDEN_COLUMNS)
+    hidden = HIDDEN_COLUMNS if has_sheet else [c for c in HIDDEN_COLUMNS if c != "_sheet_by_day"]
+    return pd.DataFrame(rows, columns=report_columns(source_of_truth, sources) + hidden)

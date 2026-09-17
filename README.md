@@ -1,10 +1,14 @@
-# Aqua-Tots hours audit
+# Hours audit
 
 Checks whether a location's hours agree across three sources: Google Business
 Profile (GBP), the website, and the team's own hours sheet. The website
 turned out not to be reliable enough to treat as ground truth on its own, so
 the sheet was added as a third, independently-checked source rather than a
 replacement.
+
+Built for Aqua-Tots first; Papa's Pizza To Go was added second. Everything
+except the website's HTML parsing is shared across brands unchanged -- see
+"Adding a new brand" near the bottom.
 
 ## Install
 
@@ -25,26 +29,38 @@ instead: `.venv/bin/python audit.py --gbp gbp_export.csv`.
 streamlit run app.py
 ```
 
-Opens a page at `http://localhost:8501`: paste/confirm the Master Sheet URL
-(pre-filled with the team's sheet), upload the GBP export CSV, pick a
+Opens a page at `http://localhost:8501`: pick a **Brand** (this is what
+selects which website-parsing logic runs — see "Adding a new brand" below),
+optionally paste a Master Sheet URL (pre-filled with that brand's sheet if
+one's registered, blank otherwise so you don't accidentally audit the wrong
+brand against someone else's sheet), upload the GBP export CSV, pick a
 **Source of truth**, click "Run audit". You get a table back — just **Name**
-plus the two match columns for whichever source you picked — color-coded
+plus the match column(s) for whichever source you picked — color-coded
 green (`Yes`) / red (`No`) / amber (`N/A (not enough data)`), plus a CSV
 download button. Store code, Locality, State, and Website aren't shown in
 the table (the name already identifies the location, and Website lives in
 the hours dialog instead — see below), but all four are still included in
 the CSV download for reference.
 
-**Source of truth is a dropdown, not fixed**: pick GBP, Website, or Master
-Sheet, and the app checks the *other two* directly against whichever one you
-picked — same star-shaped comparison either way, just pointed at a
-different center. Column names and the hours dialog both follow: pick
-"GBP" and you get `Website Matches GBP` / `Master Sheet Matches GBP`, with
-the dialog showing GBP plain and the other two colored against it. Master
-Sheet is the recommended default since it's the one the team maintains by
-hand — the website turned out not to be reliable enough to trust on its
-own — but nothing stops you from checking, say, whether the website and
-sheet agree with what's on GBP instead.
+**The Master Sheet is optional.** Leave the URL blank and the app compares
+GBP against the website only — same as before the sheet existed — with a
+single `GBP Matches Website` (or `Website Matches GBP`) column. The moment
+a URL is there, Master Sheet becomes available as a third source and a
+choice in the dropdown; clearing the URL later automatically falls back the
+selection to Website if it was set to Master Sheet, since that option no
+longer exists.
+
+**Source of truth is a dropdown, not fixed**: with a sheet, pick GBP,
+Website, or Master Sheet; without one, pick GBP or Website. The app checks
+the *other* source(s) directly against whichever one you picked — same
+star-shaped comparison either way, just pointed at a different center.
+Column names and the hours dialog both follow: pick "GBP" (with a sheet
+present) and you get `Website Matches GBP` / `Master Sheet Matches GBP`,
+with the dialog showing GBP plain and the other two colored against it.
+Master Sheet is the recommended default when available since it's the one
+the team maintains by hand — the website turned out not to be reliable
+enough to trust on its own — but nothing stops you from checking, say,
+whether the website and sheet agree with what's on GBP instead.
 
 **Changing the dropdown alone doesn't change what's on screen** — it only
 takes effect on the next "Run audit" click. The already-computed report
@@ -52,22 +68,22 @@ keeps showing the source of truth it was actually run with, so you can't
 end up with a screen where the columns and the underlying numbers disagree
 about which source is "truth."
 
-**Hours live in a dialog, not the table**: three columns of comma-separated
-per-day times were hard to scan side by side, so the table only shows the
-match verdicts. Click anywhere on a row to open a popup with a proper Day
-grid for that location (source of truth first, then the other two), plus
-the location's website link at the bottom. The chosen source of truth is
-shown plain, and the other two columns are each colored by comparing
-directly against it (gray means the source of truth had no data for that
-day, so there's nothing to check against). Click the row again (or another
-row) to close it or switch locations.
+**Hours live in a dialog, not the table**: comma-separated per-day times
+across multiple columns were hard to scan side by side, so the table only
+shows the match verdicts. Click anywhere on a row to open a popup with a
+proper Day grid for that location (source of truth first, then the other
+source(s)), plus the location's website link at the bottom. The chosen
+source of truth is shown plain, and the other column(s) are each colored by
+comparing directly against it (gray means the source of truth had no data
+for that day, so there's nothing to check against). Click the row again (or
+another row) to close it or switch locations.
 
-**How the two match columns work:** both are checked directly against
-whichever source you picked as truth, not against each other — reporting
-them separately (rather than one combined verdict) shows which side is
-actually the odd one out. The trade-off of trusting one source: if that
-source itself is wrong, the other two can both come back flagged even
-though they agree with each other — that's expected, not a bug, since
+**How the match column(s) work:** each is checked directly against
+whichever source you picked as truth, not against each other — with a
+sheet present, reporting them separately (rather than one combined verdict)
+shows which side is actually the odd one out. The trade-off of trusting one
+source: if that source itself is wrong, the other(s) can come back flagged
+even though they agree with each other — that's expected, not a bug, since
 everything is judged against the chosen source on purpose. A day only
 counts if both sides being compared have data for it; a location with too
 little overlapping data across the board comes back `N/A (not enough
@@ -145,7 +161,8 @@ Scrapes and compares in one shot and writes `simple_report.csv`: one row per
 location with `Business name`, `GBP Hours`, `Website Hours`, and `Do they
 Match` (`Yes` / `No` / `N/A (...)` for locations with nothing to compare —
 no website, no GBP hours, etc). Same flags as below apply (`--tolerance`,
-`--workers`, `--cache`, `--blank-gbp-is-closed`).
+`--workers`, `--cache`, `--blank-gbp-is-closed`), plus `--brand` (see
+"Adding a new brand" below; defaults to `aqua_tots`).
 
 ### Full version — two steps, full detail
 
@@ -163,6 +180,8 @@ python scrape_website_hours.py --gbp gbp_export.csv
 ```
 
 Useful flags:
+- `--brand aqua_tots|papas_pizza` — which site's markup to parse (default
+  `aqua_tots`). See "Adding a new brand" below.
 - `--limit 5` — smoke test against the first 5 pages only.
 - `--workers 8` — parallel fetch workers (default 8).
 - `--cache ./cache` — disk cache directory for raw HTML, keyed by URL hash. A
@@ -224,6 +243,51 @@ against the standard `www.aqua-tots.com` template. These 7 rows may come
 back as `SITE_NO_HOURS`, or with hours that look off, simply because the page
 structure differs — eyeball them by hand after the first run rather than
 trusting the verdict blindly.
+
+## Adding a new brand
+
+Only the website's HTML parsing is brand-specific. GBP parsing, the sheet
+join, the comparison logic, the caching/fetching/retry machinery, and the
+whole app UI are shared as-is — a new brand is one new file plus one line.
+
+1. **Look at the site first.** Fetch a real location page with plain
+   `requests` (no browser) and check the hours are actually in that raw
+   HTML — some sites render hours client-side with JavaScript, which this
+   project can't handle (see the ground-truth check that was done for
+   Aqua-Tots and Papa's Pizza, both server-rendered). Note the real
+   selector/heading the hours live under, the day-name order, the time
+   format (12h vs 24h, am/pm placement), how a closed day is written, and
+   whether any location has split hours (e.g. a lunch/dinner gap).
+
+2. **Write `scrapers/<brand>.py`** with one function:
+
+   ```python
+   def parse_page(html, requested_url):
+       """Returns (hours_by_day, page_title, page_phone, raw_block, notes)."""
+   ```
+
+   `hours_by_day` is `{day: canonical}` using `hours_lib.parse_day_hours()`
+   on each day's raw text — reuse it rather than writing new time parsing;
+   it already handles 12h/24h, split hours, "Closed", ranges with no am/pm,
+   and the ambiguous-time safety check (see "Always write am/pm" above).
+   `notes` should include `"no hours block found"` when the expected
+   markup isn't present, so that row surfaces for manual review. Look at
+   `scrapers/aqua_tots.py` (ancestor-climbing around a heading, no stable
+   CSS hook) and `scrapers/papas_pizza.py` (a clean, directly-selectable
+   grid) as two different real shapes to model from.
+
+3. **Register it** in `scrapers/__init__.py`: add one entry to `BRANDS` with
+   a display label, the new `parse_page`, and a `default_sheet_url` (blank
+   string if there isn't one yet).
+
+4. **Write tests** in `tests/test_scrapers_<brand>.py` against real HTML
+   fixtures captured from the live site (not hypothetical markup) — at
+   least one normal location, one with a closed day, and one missing the
+   hours block entirely. `tests/test_scrapers_papas_pizza.py` is a template.
+
+That's it — the brand shows up in the app's **Brand** dropdown and in
+`--brand` on the CLI tools automatically, with no other file needing to
+change.
 
 ## Tests
 

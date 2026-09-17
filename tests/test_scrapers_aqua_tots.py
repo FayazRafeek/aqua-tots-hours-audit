@@ -1,6 +1,6 @@
 import hours_lib as hl
-from scrape_website_hours import extract_hours_block, normalize_url, parse_page, slug_of, split_day_blocks
 from bs4 import BeautifulSoup
+from scrapers.aqua_tots import extract_hours_block, parse_page, split_day_blocks
 
 STERLING_HTML = """
 <html><body>
@@ -28,34 +28,6 @@ STERLING_HTML = """
 """
 
 NO_HOURS_BLOCK_HTML = "<html><body><h1>Aqua-Tots Swim Lessons in Nowhere</h1><p>No hours heading here.</p></body></html>"
-
-
-def test_normalize_url_strips_query_and_forces_trailing_slash():
-    assert (
-        normalize_url("https://www.aqua-tots.com/mesa?utm_source=Google&utm_medium=Organic&utm_campaign=LocalSEO")
-        == "https://www.aqua-tots.com/mesa/"
-    )
-
-
-def test_normalize_url_handles_existing_trailing_slash_and_dup_params():
-    assert (
-        normalize_url(
-            "https://www.aqua-tots.com/sterling/?utm_source=Google&utm_medium=Organic"
-            "&utm_campaign=LocalSEO&utm_source=google&utm_medium=organic&utm_campaign=local-seo"
-        )
-        == "https://www.aqua-tots.com/sterling/"
-    )
-
-
-def test_normalize_url_blank_returns_empty_string():
-    assert normalize_url("") == ""
-    assert normalize_url(None) == ""
-    assert normalize_url("   ") == ""
-
-
-def test_slug_of():
-    assert slug_of("https://www.aqua-tots.com/mesa/") == "mesa"
-    assert slug_of("https://www.aqua-tots.com/sterling/") == "sterling"
 
 
 def test_extract_hours_block_scopes_to_hours_container_and_ignores_later_mention():
