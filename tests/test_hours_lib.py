@@ -74,6 +74,34 @@ def test_unambiguous_24h_hour_is_not_treated_as_ambiguous():
     # An hour outside 1-12 (here, 17) can only be 24h notation, so this
     # isn't ambiguous even though it's bare -- and it doesn't need a wrap.
     assert hl.fmt(hl.parse_day_hours("9:00-17:00")) == "09:00-17:00"
+
+
+# ---------------------------------------------------------------------------
+# trust_source: re-parsing our own fmt() output must round-trip correctly,
+# even for overnight ranges that look identical, as text, to the ambiguous
+# case above. Regression test for a real bug: a scraped website's overnight
+# hours (e.g. Sarpino's Pizzeria, open until 1-3am) got formatted to
+# "10:00-02:00" by fmt(), then silently turned into "unknown" the moment
+# three_way_compare/compare_hours re-parsed that same string without
+# trust_source, discarding real hours on every comparison run.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw", ["10:00-02:00", "10:00-01:00", "10:00-03:00"])
+def test_trust_source_round_trips_overnight_fmt_output(raw):
+    assert hl.parse_day_hours(raw, trust_source=True) is not None
+    assert hl.fmt(hl.parse_day_hours(raw, trust_source=True)) == raw
+
+
+def test_trust_source_false_by_default_still_rejects_ambiguous_text():
+    # The default stays safe for actual raw/human-entered source text --
+    # trust_source is opt-in, not a global relaxation of the safety check.
+    assert hl.parse_day_hours("10:00-02:00") is None
+
+
+def test_fmt_then_reparse_with_trust_source_recovers_original_overnight_range():
+    original = hl.parse_day_hours("6:00pm - 1:00am")
+    round_tripped = hl.parse_day_hours(hl.fmt(original), trust_source=True)
+    assert round_tripped == original
     assert hl.fmt(hl.parse_day_hours("00:00-24:00")) == "24 hours"
 
 

@@ -53,7 +53,7 @@ class AmbiguousTimeRangeError(ValueError):
     which one it is can't be told apart from the text alone."""
 
 
-def _parse_pair(tok1, tok2):
+def _parse_pair(tok1, tok2, trust_source=False):
     h1, m1, mer1 = _parse_token(tok1)
     h2, m2, mer2 = _parse_token(tok2)
 
@@ -68,8 +68,13 @@ def _parse_pair(tok1, tok2):
         # "10:00-08:00" meaning open all night. We can't tell those apart,
         # so when the literal 24h reading would require an overnight wrap
         # AND both hours are in the ambiguous 1-12 range, refuse to guess
-        # rather than silently produce a wrong comparison either way.
-        if 1 <= h1 <= 12 and 1 <= h2 <= 12 and (h2 * 60 + m2) < (h1 * 60 + m1):
+        # rather than silently produce a wrong comparison either way --
+        # UNLESS trust_source says this text is our own fmt() output being
+        # read back (see parse_day_hours), in which case it's not a guess
+        # at all: fmt() only ever produces this shape for a range that was
+        # already a confirmed overnight span, so skipping the check here
+        # is what avoids silently losing exactly that data on re-parse.
+        if not trust_source and 1 <= h1 <= 12 and 1 <= h2 <= 12 and (h2 * 60 + m2) < (h1 * 60 + m1):
             raise AmbiguousTimeRangeError(f"{tok1} - {tok2}")
     elif mer1 is not None and mer2 is not None:
         start_h, start_m = _to24(h1, mer1), m1
@@ -105,8 +110,19 @@ def merge(intervals):
     return merged
 
 
-def parse_day_hours(raw):
-    """Parse one day's raw hours cell (from either GBP or the website) into canonical form."""
+def parse_day_hours(raw, trust_source=False):
+    """Parse one day's raw hours cell (from GBP, the website, or the sheet)
+    into canonical form.
+
+    trust_source=True skips the ambiguous-overnight safety check below --
+    use it ONLY when re-parsing text this module itself already produced
+    via fmt() (e.g. reconstructing canonical hours from a scraped-website
+    CSV column), never for raw text typed or exported by a human or a
+    third-party site. fmt()'s own overnight-wrap convention (18:00-01:00)
+    is indistinguishable, as text, from the ambiguous case the safety check
+    exists to catch -- so re-parsing our own output with the check still on
+    would silently throw away real overnight hours on every round-trip.
+    """
     if raw is None:
         return None
     s = str(raw).strip()
@@ -122,7 +138,7 @@ def parse_day_hours(raw):
         return None
 
     try:
-        intervals = [_parse_pair(tok1, tok2) for tok1, tok2 in matches]
+        intervals = [_parse_pair(tok1, tok2, trust_source) for tok1, tok2 in matches]
     except AmbiguousTimeRangeError:
         # Don't guess, and don't half-parse a split-hours cell -- one
         # ambiguous range makes the whole day's data untrustworthy.

@@ -222,3 +222,21 @@ def test_no_sheet_hidden_columns_omit_sheet_by_day():
     assert "_sheet_by_day" not in report.columns
     assert "_gbp_by_day" in report.columns
     assert "_site_by_day" in report.columns
+
+
+def test_overnight_website_hours_are_not_silently_lost():
+    # Regression test for a real bug: site_df's "{day} hours (site)" column
+    # holds the scraper's own hl.fmt() output (e.g. "10:00-02:00" for a
+    # location open until 2am), and re-parsing that string without
+    # trust_source=True made the ambiguous-overnight safety check discard
+    # it as unknown on every single comparison -- turning a genuine match
+    # into a false "not enough data" for any brand with late-night hours
+    # (first caught via Sarpino's Pizzeria, open past midnight nearly
+    # everywhere).
+    gbp_df = pd.DataFrame(
+        [_gbp_row("S1", "Open Late", "https://example.com/open-late/", Monday="10:00am-2:00am")]
+    )
+    site_df = pd.DataFrame([_site_row("https://example.com/open-late/", Monday="10:00-02:00")])
+
+    report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="website")
+    assert report.iloc[0]["GBP Matches Website"] == "Yes"

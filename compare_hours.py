@@ -57,7 +57,9 @@ def compare_row(gbp_row, site_row, tolerance, blank_gbp_is_closed):
     site_hours = {}
     for day in hl.GBP_DAY_ORDER:
         raw = site_row.get(f"{day} hours (site)", "")
-        site_hours[day] = hl.parse_day_hours(raw) if str(raw).strip() else None
+        # trust_source=True: this column is our own hl.fmt() output from the
+        # scrape step, not raw website text -- see parse_day_hours' docstring.
+        site_hours[day] = hl.parse_day_hours(raw, trust_source=True) if str(raw).strip() else None
 
     fetch_status = str(site_row.get("fetch_status", "") or "")
     site_has_no_hours_block = "no hours block found" in fetch_status or fetch_status.startswith("fetch error")

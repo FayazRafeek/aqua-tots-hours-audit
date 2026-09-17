@@ -6,9 +6,9 @@ turned out not to be reliable enough to treat as ground truth on its own, so
 the sheet was added as a third, independently-checked source rather than a
 replacement.
 
-Built for Aqua-Tots first; Papa's Pizza To Go was added second. Everything
-except the website's HTML parsing is shared across brands unchanged -- see
-"Adding a new brand" near the bottom.
+Built for Aqua-Tots first; Papa's Pizza To Go, Sarpino's Pizzeria, and Papa
+Romano's were added after. Everything except the website's HTML parsing is
+shared across brands unchanged -- see "Adding a new brand" near the bottom.
 
 ## Install
 
@@ -180,8 +180,8 @@ python scrape_website_hours.py --gbp gbp_export.csv
 ```
 
 Useful flags:
-- `--brand aqua_tots|papas_pizza` — which site's markup to parse (default
-  `aqua_tots`). See "Adding a new brand" below.
+- `--brand aqua_tots|papas_pizza|sarpinos|papa_romanos` — which site's markup
+  to parse (default `aqua_tots`). See "Adding a new brand" below.
 - `--limit 5` — smoke test against the first 5 pages only.
 - `--workers 8` — parallel fetch workers (default 8).
 - `--cache ./cache` — disk cache directory for raw HTML, keyed by URL hash. A
@@ -254,10 +254,14 @@ whole app UI are shared as-is — a new brand is one new file plus one line.
    `requests` (no browser) and check the hours are actually in that raw
    HTML — some sites render hours client-side with JavaScript, which this
    project can't handle (see the ground-truth check that was done for
-   Aqua-Tots and Papa's Pizza, both server-rendered). Note the real
-   selector/heading the hours live under, the day-name order, the time
-   format (12h vs 24h, am/pm placement), how a closed day is written, and
-   whether any location has split hours (e.g. a lunch/dinner gap).
+   Aqua-Tots, Papa's Pizza, and Sarpino's, all server-rendered). Note the
+   real selector/heading the hours live under, the day-name order, the
+   time format (12h vs 24h, am/pm placement), how a closed day is written,
+   and whether any location has split hours (e.g. a lunch/dinner gap).
+   Also check for a `<script type="application/ld+json">` block with an
+   `openingHours` array (schema.org structured data) — when a site has
+   one, as Sarpino's does, it's far more reliable to parse than free text
+   and worth checking for before writing any HTML-scraping logic at all.
 
 2. **Write `scrapers/<brand>.py`** with one function:
 
@@ -273,8 +277,23 @@ whole app UI are shared as-is — a new brand is one new file plus one line.
    `notes` should include `"no hours block found"` when the expected
    markup isn't present, so that row surfaces for manual review. Look at
    `scrapers/aqua_tots.py` (ancestor-climbing around a heading, no stable
-   CSS hook) and `scrapers/papas_pizza.py` (a clean, directly-selectable
-   grid) as two different real shapes to model from.
+   CSS hook), `scrapers/papas_pizza.py` (a clean, directly-selectable
+   grid), and `scrapers/sarpinos.py` (schema.org JSON-LD, no HTML text
+   parsing at all) as three different real shapes to model from.
+
+   **Watch out for round-tripping through `hl.fmt()`.** The scraper's
+   output CSV stores each day as `hl.fmt()`'s own display string (e.g.
+   `"10:00-02:00"` for a location open until 2am), and the comparison
+   step re-parses that string back into canonical form later. If your
+   brand has overnight hours, that re-parse must pass
+   `trust_source=True` to `parse_day_hours()` (already done in
+   `three_way_compare.py` and `compare_hours.py` — nothing to change if
+   you're just adding a brand, not touching the comparison code) --
+   without it, the ambiguous-time safety check misreads the *output* of
+   our own formatter as a suspicious *input* and silently discards real
+   hours. This was a real bug, caught only once a brand with late-night
+   hours (Sarpino's) was added — Aqua-Tots and Papa's Pizza never
+   exercised it since neither has hours crossing midnight.
 
 3. **Register it** in `scrapers/__init__.py`: add one entry to `BRANDS` with
    a display label, the new `parse_page`, and a `default_sheet_url` (blank

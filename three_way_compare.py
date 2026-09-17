@@ -115,8 +115,14 @@ def run_three_way(gbp_df, site_df, sheet_df, tolerance=0, blank_gbp_is_closed=Tr
         normalized_url = normalize_url(website)
         site_row = site_by_url.get(normalized_url) if normalized_url else None
         if site_row is not None:
+            # trust_source=True: this column is our own hl.fmt() output from
+            # the scrape step, not raw text from the website -- see
+            # parse_day_hours' docstring for why re-parsing it with the
+            # ambiguous-overnight safety check still on would silently drop
+            # real overnight hours (e.g. "10:00-02:00") on every run.
             site_hours = {
-                day: hl.parse_day_hours(site_row.get(f"{day} hours (site)", "")) for day in hl.GBP_DAY_ORDER
+                day: hl.parse_day_hours(site_row.get(f"{day} hours (site)", ""), trust_source=True)
+                for day in hl.GBP_DAY_ORDER
             }
         else:
             site_hours = {day: None for day in hl.GBP_DAY_ORDER}

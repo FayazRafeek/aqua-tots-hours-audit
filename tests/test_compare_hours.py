@@ -126,3 +126,16 @@ def test_tolerance_flag_forgives_small_differences():
 
     lenient = run_comparison(gbp_df, site_df, tolerance=15, blank_gbp_is_closed=True)
     assert lenient.iloc[0]["Verdict"] == "MATCH"
+
+
+def test_overnight_website_hours_are_not_silently_lost():
+    # Regression test: site_df's "{day} hours (site)" column holds the
+    # scraper's own hl.fmt() output (e.g. "10:00-02:00"), and re-parsing it
+    # without trust_source=True made the ambiguous-overnight safety check
+    # discard it as unknown, turning a real match into a false SITE_NO_HOURS
+    # for any location open past midnight.
+    gbp_df = pd.DataFrame([_gbp_row("S1", "Open Late", "https://www.aqua-tots.com/open-late/", Monday="10:00am-2:00am")])
+    site_df = pd.DataFrame([_site_row("https://www.aqua-tots.com/open-late/", Monday="10:00-02:00")])
+
+    report = run_comparison(gbp_df, site_df, tolerance=0, blank_gbp_is_closed=True)
+    assert report.iloc[0]["Verdict"] == "MATCH"
