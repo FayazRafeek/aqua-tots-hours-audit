@@ -38,10 +38,18 @@ brand against someone else's sheet), upload the GBP export CSV, pick a
 **Source of truth**, click "Run audit". You get a table back — just **Name**
 plus the match column(s) for whichever source you picked — color-coded
 green (`Yes`) / red (`No`) / amber (`N/A (not enough data)`), plus a CSV
-download button. Store code, Locality, State, and Website aren't shown in
-the table (the name already identifies the location, and Website lives in
-the hours dialog instead — see below), but all four are still included in
-the CSV download for reference.
+download button. Store code and Locality/State/Website aren't shown by
+default (the name already identifies the location), but all four are still
+included in the CSV download for reference, and Address/Website
+URL/Hours can be added back into the table itself — see below.
+
+Each row has a **"🔍 View hours" button** that opens the full day-by-day
+comparison for that location (this is also where the website link lives
+when it isn't shown as its own column). Advanced settings has an **"Extra
+columns in the results table"** picker — Address (combined), Website URL,
+Hours columns — for adding any of those straight into the table instead of
+opening a row at a time; it applies to the table already on screen, no
+need to re-run the audit.
 
 **The Master Sheet is optional.** Leave the URL blank and the app compares
 GBP against the website only — same as before the sheet existed — with a

@@ -22,7 +22,6 @@ from sheet_source import fetch_sheet_hours
 from three_way_compare import (
     HIDDEN_COLUMNS,
     HOURS_COLUMNS,
-    IDENTITY_COLUMNS,
     SOURCE_LABELS,
     checker_columns,
     dialog_source_order,
@@ -32,6 +31,13 @@ from three_way_compare import (
 SOURCE_OPTIONS_WITH_SHEET = ["sheet", "gbp", "website"]  # "sheet" first: the recommended default
 SOURCE_OPTIONS_NO_SHEET = ["website", "gbp"]  # "website" first: the fallback when there's no sheet to trust
 BRAND_OPTIONS = list(BRANDS)  # dict order == scrapers/__init__.py's registration order
+
+# Off by default -- Name plus the match column(s) is the minimal view most
+# runs need, and every one of these adds either width (Address, Website URL)
+# or the comma-separated-times clutter the table was deliberately kept clear
+# of (Hours columns). Opt-in in Advanced settings for whoever needs the extra
+# context without leaving the table.
+EXTRA_COLUMN_OPTIONS = ["Address (combined)", "Website URL", "Hours columns"]
 
 # Streamlit Cloud's "Manage app" panel just tails this app's stdout/stderr --
 # there's no separate log viewer to configure. logging.basicConfig() is a
@@ -49,6 +55,16 @@ def _match_color(value):
     if isinstance(value, str) and value.startswith("N/A"):
         return "background-color: #5c5424; color: #f5efc9"
     return ""
+
+
+def _match_badge_html(value):
+    style = _match_color(value).replace("background-color", "background")
+    return f"<span style='{style} padding:4px 10px; border-radius:6px; font-size:13px; white-space:nowrap;'>{value}</span>"
+
+
+def _combined_address(row):
+    parts = [str(row.get("Locality", "") or "").strip(), str(row.get("State", "") or "").strip()]
+    return ", ".join(p for p in parts if p) or "—"
 
 
 def _pair_status(a, b, tolerance):
@@ -194,6 +210,14 @@ with st.expander("Advanced settings"):
         help="Pages are cached on disk after the first fetch so repeat runs are fast. "
         "If a location's website changed recently, its cached copy can be stale -- check this to refetch every page live.",
     )
+    extra_columns = st.multiselect(
+        "Extra columns in the results table",
+        EXTRA_COLUMN_OPTIONS,
+        default=[],
+        help="Name plus the match column(s) are always shown. Add any of these for more context "
+        "without opening each row's dialog -- this applies to the table already on screen, no "
+        "need to re-run the audit.",
+    )
 
 run_clicked = st.button("Run audit", type="primary", disabled=gbp_file is None, width="stretch")
 
@@ -326,38 +350,48 @@ if "report" in st.session_state:
         if value != "All":
             shown = shown[shown[column_name] == value]
 
-    st.caption("Hours aren't shown in the table -- three columns of comma-separated times were hard to scan. Click a row to view its hours.")
-    # errors="ignore" because Sheet Hours / _sheet_by_day don't exist at all
-    # when this run had no sheet -- report_columns() already left them out.
-    table_view = shown.drop(columns=HOURS_COLUMNS + HIDDEN_COLUMNS + IDENTITY_COLUMNS, errors="ignore")
-    styled = table_view.style.map(_match_color, subset=match_columns)
+    st.caption("Click \"View hours\" on a row to see its full day-by-day comparison.")
 
-    # Keying on the filter selections (and the source of truth, since that
-    # changes which columns even exist) forces Streamlit to treat this as a
-    # fresh widget whenever any of them change, so a selection made in one
-    # view can't carry over and silently point at the wrong row in another.
-    table_key = f"results_table_{report_source_of_truth}_{'_'.join(filters.values())}"
-    event = st.dataframe(
-        styled,
-        width="stretch",
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key=table_key,
-    )
+    # Column layout: Name, one per match column, whichever extras are opted
+    # into in Advanced settings, then a fixed-width button column. Hours
+    # columns are only offered when they actually exist on this report (no
+    # sheet this run means no "Sheet Hours").
+    extra_specs = []
+    if "Address (combined)" in extra_columns:
+        extra_specs.append(("Address", 2))
+    if "Website URL" in extra_columns:
+        extra_specs.append(("Website URL", 2))
+    if "Hours columns" in extra_columns:
+        extra_specs += [(col, 3) for col in HOURS_COLUMNS if col in shown.columns]
 
-    selected_rows = event.selection.rows
-    if selected_rows:
-        idx = selected_rows[0]
-        # A row click triggers a rerun where the selection is still set to
-        # the same row -- without this guard, closing the dialog (which is
-        # also just a rerun) would immediately reopen it, since the
-        # underlying selection state never actually changed.
-        if st.session_state.get("last_opened_row") != (table_key, idx):
-            st.session_state.last_opened_row = (table_key, idx)
-            show_hours_dialog(shown.iloc[idx], report_tolerance, report_source_of_truth, report_sources)
-    else:
-        st.session_state.last_opened_row = None
+    header_specs = [("Name", 2)] + [(name, 1) for _, name in checks] + extra_specs + [("", 2)]
+    header_cols = st.columns([w for _, w in header_specs])
+    for col, (label, _) in zip(header_cols, header_specs):
+        if label:
+            col.markdown(f"**{label}**")
+
+    for idx, row in shown.iterrows():
+        with st.container(border=True):
+            row_cols = st.columns([w for _, w in header_specs])
+            row_cols[0].write(row["Name"])
+            for col, (_, column_name) in zip(row_cols[1:], checks):
+                col.markdown(_match_badge_html(row[column_name]), unsafe_allow_html=True)
+            extra_cols = row_cols[1 + len(checks) : -1]
+            for col, (column_name, _) in zip(extra_cols, extra_specs):
+                if column_name == "Address":
+                    col.write(_combined_address(row))
+                elif column_name == "Website URL":
+                    website = row.get("Website", "")
+                    col.markdown(f"[{website}]({website})" if website else "—")
+                else:
+                    col.caption(row.get(column_name, ""))
+            # A plain button's clicked state is only True on the exact rerun
+            # it was clicked, unlike st.dataframe row selection (which stays
+            # selected across reruns and needed a guard to avoid the dialog
+            # reopening the instant it was closed) -- so no such guard is
+            # needed here.
+            if row_cols[-1].button("🔍 View hours", key=f"view_{idx}", width="stretch"):
+                show_hours_dialog(row, report_tolerance, report_source_of_truth, report_sources)
 
     st.download_button(
         "Download CSV",
