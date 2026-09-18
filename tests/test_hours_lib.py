@@ -246,3 +246,86 @@ def test_gbp_row_blank_means_unknown_when_flag_flipped():
     result = hl.gbp_row_hours(row, blank_means_closed=False)
     assert result["Monday"] == [(9 * 60, 17 * 60)]
     assert result["Tuesday"] is None
+
+
+# ---------------------------------------------------------------------------
+# GBP's split-at-midnight overnight encoding
+# ---------------------------------------------------------------------------
+
+# Real markup of the shape every overnight location in a GBP export uses --
+# captured from Sarpino's Pizzeria South Leawood. Fri/Sat nights close at
+# 03:00, every other night at 02:00, which is why the tails differ.
+SPLIT_OVERNIGHT_ROW = {
+    "Sunday hours": "00:00-03:00, 10:00-24:00",
+    "Monday hours": "00:00-02:00, 10:00-24:00",
+    "Tuesday hours": "00:00-02:00, 10:00-24:00",
+    "Wednesday hours": "00:00-02:00, 10:00-24:00",
+    "Thursday hours": "00:00-02:00, 10:00-24:00",
+    "Friday hours": "00:00-02:00, 10:00-24:00",
+    "Saturday hours": "00:00-03:00, 10:00-24:00",
+}
+
+
+def test_split_midnight_becomes_one_overnight_session():
+    result = hl.gbp_row_hours(SPLIT_OVERNIGHT_ROW)
+    # Read literally this day is "open 00:00-02:00, then again 10:00-24:00";
+    # what it actually is, is one session opening at 10:00 and closing at 02:00.
+    assert result["Monday"] == [(10 * 60, 24 * 60 + 2 * 60)]
+    assert hl.fmt(result["Monday"]) == "10:00-02:00"
+
+
+def test_closing_time_comes_from_the_following_days_tail():
+    # The Friday-night close is published on Saturday's row, so reading
+    # Friday's own cell alone gives 02:00 -- Thursday night's close.
+    result = hl.gbp_row_hours(SPLIT_OVERNIGHT_ROW)
+    assert hl.fmt(result["Friday"]) == "10:00-03:00"
+    assert hl.fmt(result["Thursday"]) == "10:00-02:00"
+
+
+def test_saturday_night_tail_wraps_around_to_sunday():
+    result = hl.gbp_row_hours(SPLIT_OVERNIGHT_ROW)
+    assert hl.fmt(result["Saturday"]) == "10:00-03:00"  # from Sunday's 00:00-03:00
+    assert hl.fmt(result["Sunday"]) == "10:00-02:00"  # from Monday's 00:00-02:00
+
+
+def test_stitched_gbp_hours_equal_the_websites_single_range():
+    # The whole point: GBP's two fragments and a site's "10:00 AM - 2:00 AM"
+    # have to land on the same canonical value or every night is a false
+    # mismatch.
+    result = hl.gbp_row_hours(SPLIT_OVERNIGHT_ROW)
+    assert hl.equal(result["Monday"], hl.parse_day_hours("10:00 am - 2:00 am"))
+
+
+def test_open_24_hours_is_not_stitched_into_a_48_hour_day():
+    row = _row(**{f"{day} hours": "00:00-24:00" for day in hl.GBP_DAY_ORDER})
+    result = hl.gbp_row_hours(row)
+    assert result["Monday"] == [(0, 1440)]
+
+
+def test_ordinary_hours_are_left_alone():
+    row = _row(**{"Monday hours": "10:00-23:00", "Tuesday hours": "10:00-23:00"})
+    result = hl.gbp_row_hours(row)
+    assert result["Monday"] == [(10 * 60, 23 * 60)]
+    assert result["Tuesday"] == [(10 * 60, 23 * 60)]
+
+
+def test_midnight_close_with_no_tail_next_day_stays_a_midnight_close():
+    # Nothing to rejoin: Tuesday is closed, so Monday really does end at 24:00.
+    row = _row(**{"Monday hours": "10:00-24:00"})
+    result = hl.gbp_row_hours(row)
+    assert hl.fmt(result["Monday"]) == "10:00-24:00"
+
+
+def test_day_that_is_only_a_carryover_becomes_closed():
+    # Open Monday 10:00 through Tuesday 02:00 and not otherwise on Tuesday --
+    # Tuesday has no opening of its own.
+    row = _row(**{"Monday hours": "10:00-24:00", "Tuesday hours": "00:00-02:00"})
+    result = hl.gbp_row_hours(row)
+    assert hl.fmt(result["Monday"]) == "10:00-02:00"
+    assert result["Tuesday"] == []
+
+
+def test_split_lunch_dinner_hours_are_not_treated_as_overnight():
+    row = _row(**{"Monday hours": "11:00-14:00, 17:00-22:00"})
+    result = hl.gbp_row_hours(row)
+    assert result["Monday"] == [(11 * 60, 14 * 60), (17 * 60, 22 * 60)]

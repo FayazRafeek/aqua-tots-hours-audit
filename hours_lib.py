@@ -185,6 +185,61 @@ def equal(a, b, tolerance=0):
     return True
 
 
+def stitch_midnight_split(by_day):
+    """Put GBP's split-at-midnight encoding of an overnight session back together.
+
+    GBP publishes hours per calendar day, so one session running past
+    midnight is split across two days' cells:
+
+        Sunday     00:00-02:00, 10:00-24:00
+        Monday     00:00-02:00, 10:00-24:00
+
+    Monday's leading 00:00-02:00 is not a Monday-morning opening -- it's the
+    tail of Sunday's session, and Sunday's own 10:00-24:00 is the head of one
+    that finishes at 02:00 on Monday. Read literally, day by day, that shop
+    looks like it opens twice a day with an eight-hour gap; what it actually
+    does is open once, at 10:00, and close at 02:00.
+
+    Every other source writes the same session the way a person would -- the
+    websites and the team's sheet both say "10:00 AM - 2:00 AM" on the day it
+    opens -- so GBP can't be compared against either until it's rejoined the
+    same way. That's why this is applied to the GBP export only.
+
+    A fragment ending exactly at 24:00 next to one starting exactly at 00:00
+    is never anything but a single span: a shop that shuts at midnight sharp
+    and reopens at midnight sharp never shut. The days are walked cyclically,
+    so Saturday night's tail on Sunday morning is rejoined too.
+    """
+    new_end = {}  # day -> where its last fragment really ends, past midnight
+    drop_head = set()  # days whose first fragment belongs to the day before
+
+    for index, day in enumerate(GBP_DAY_ORDER):
+        next_day = GBP_DAY_ORDER[(index + 1) % len(GBP_DAY_ORDER)]
+        today, tomorrow = by_day.get(day), by_day.get(next_day)
+        if not today or not tomorrow:  # closed ([]) or unknown (None) -- nothing to join
+            continue
+        tail, head = today[-1], tomorrow[0]
+        # Requiring tail to start after 00:00 and head to end before 24:00
+        # rules out a plain 00:00-24:00 day, where touching midnight means
+        # open all day rather than a session crossing over into the next one.
+        if tail[1] == 1440 and tail[0] > 0 and head[0] == 0 and head[1] < 1440:
+            new_end[day] = 1440 + head[1]
+            drop_head.add(next_day)
+
+    stitched = {}
+    for day, intervals in by_day.items():
+        if not intervals:
+            stitched[day] = intervals
+            continue
+        fragments = list(intervals)
+        if day in new_end:
+            fragments[-1] = (fragments[-1][0], new_end[day])
+        if day in drop_head:
+            fragments = fragments[1:]
+        stitched[day] = fragments
+    return stitched
+
+
 def gbp_row_hours(row, blank_means_closed=True):
     """One GBP export row -> {day: canonical}.
 
@@ -203,4 +258,4 @@ def gbp_row_hours(row, blank_means_closed=True):
             result[day] = [] if blank_means_closed else None
         else:
             result[day] = parse_day_hours(raw)
-    return result
+    return stitch_midnight_split(result)

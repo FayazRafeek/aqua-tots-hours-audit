@@ -240,3 +240,34 @@ def test_overnight_website_hours_are_not_silently_lost():
 
     report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="website")
     assert report.iloc[0]["GBP Matches Website"] == "Yes"
+
+
+def test_gbp_split_at_midnight_matches_the_websites_overnight_range():
+    # Regression test for a real bug, found against a live GBP export of
+    # Sarpino's: GBP publishes hours per calendar day, so a location open
+    # 10:00 to 02:00 is exported as two fragments split across two days
+    # ("00:00-02:00, 10:00-24:00" on each), while the website states the
+    # whole session on the day it opens. Compared as-is, every single night
+    # came back "No" for every overnight location.
+    overnight = {day: "00:00-02:00, 10:00-24:00" for day in hl.GBP_DAY_ORDER}
+    gbp_df = pd.DataFrame([_gbp_row("S1", "Open Late", "https://example.com/open-late/", **overnight)])
+    site_df = pd.DataFrame(
+        [_site_row("https://example.com/open-late/", **{day: "10:00-02:00" for day in hl.GBP_DAY_ORDER})]
+    )
+
+    report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="website")
+    assert report.iloc[0]["GBP Matches Website"] == "Yes"
+
+
+def test_genuinely_different_overnight_close_still_flagged():
+    # The stitching must not paper over a real disagreement: here GBP's
+    # Monday session closes at 03:00 (published as Tuesday's leading
+    # fragment) while the site says 02:00.
+    overnight = {day: "00:00-03:00, 10:00-24:00" for day in hl.GBP_DAY_ORDER}
+    gbp_df = pd.DataFrame([_gbp_row("S1", "Open Later", "https://example.com/open-later/", **overnight)])
+    site_df = pd.DataFrame(
+        [_site_row("https://example.com/open-later/", **{day: "10:00-02:00" for day in hl.GBP_DAY_ORDER})]
+    )
+
+    report = run_three_way(gbp_df, site_df, sheet_df=None, source_of_truth="website")
+    assert report.iloc[0]["GBP Matches Website"] == "No"

@@ -244,6 +244,43 @@ Pass `--blank-gbp-is-closed no` to instead treat every blank cell as unknown
 carried into the report as a reference column (`Special hours (GBP)`) and
 never compared.
 
+## Overnight hours: GBP splits them across two days
+
+GBP publishes hours **per calendar day**, so a location open from 10am until
+2am the next morning is not exported as one range. It's exported as two
+fragments on two different days' cells:
+
+```
+Sunday hours      00:00-02:00, 10:00-24:00
+Monday hours      00:00-02:00, 10:00-24:00
+```
+
+Monday's leading `00:00-02:00` is not a Monday-morning opening — it's the
+tail of *Sunday's* session, and Sunday's own `10:00-24:00` is the head of one
+that finishes at 2am on Monday. Read day by day, that shop looks like it
+opens twice daily with an eight-hour gap; what it actually does is open once,
+at 10am, and close at 2am.
+
+Every other source writes that session the way a person would — the websites
+and the team's sheet both say "10:00 AM - 2:00 AM", on the day it opens — so
+**the tool rejoins GBP's fragments before comparing anything**
+(`hours_lib.stitch_midnight_split`, applied to the GBP export only). Without
+it, every single night of every overnight location came back as a mismatch.
+
+Two consequences worth knowing:
+
+- **A day's closing time is published on the *next* day's row.** Friday night's
+  2am-vs-3am close lives in Saturday's leading fragment. So a location closing
+  later on Fri/Sat nights shows `00:00-02:00, 10:00-24:00` on Friday and
+  `00:00-03:00, 10:00-24:00` on Saturday — and reads, correctly, as Friday
+  `10:00-03:00` and Saturday `10:00-03:00`. The week is walked cyclically, so
+  Saturday night's tail on Sunday morning is rejoined too.
+- **`00:00-24:00` is left alone.** A fragment is only rejoined when it ends at
+  24:00 having started *after* 00:00, and the next day's starts at 00:00 and
+  ends *before* 24:00 — otherwise an open-all-day location would stitch into a
+  48-hour day. Ordinary split hours (`11:00-14:00, 17:00-22:00`) never touch
+  midnight and are untouched.
+
 ## A note on non-US templates
 
 7 locations sit on different domains/templates than the main US site:
